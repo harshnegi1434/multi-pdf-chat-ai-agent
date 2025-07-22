@@ -11,21 +11,25 @@ interface FileInfo {
   pages?: number;
 }
 
+
 const App: React.FC = () => {
   const [pdfsUploaded, setPdfsUploaded] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<FileInfo[]>([]);
+  const [sessionId, setSessionId] = useState<string>("");
 
   const theme = darkMode ? darkTheme : lightTheme;
 
-  const handleUploadSuccess = (files: FileInfo[]) => {
-    setUploadedFiles(files);
+  const handleUploadSuccess = (result: { files: FileInfo[]; session_id: string }) => {
+    setUploadedFiles(result.files);
+    setSessionId(result.session_id);
     setPdfsUploaded(true);
   };
 
   const handleStartAgain = () => {
     setPdfsUploaded(false);
     setUploadedFiles([]);
+    setSessionId("");
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -294,7 +298,7 @@ const App: React.FC = () => {
                       flexDirection: "column",
                     }}
                   >
-                    <ChatBox dark={darkMode} />
+                    <ChatBox dark={darkMode} sessionId={sessionId} />
                   </Paper>
                 </Box>
               </>

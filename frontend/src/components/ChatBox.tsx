@@ -16,7 +16,12 @@ interface Message {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-const ChatBox: React.FC<{ dark?: boolean }> = ({ dark }) => {
+interface ChatBoxProps {
+  dark?: boolean;
+  sessionId: string;
+}
+
+const ChatBox: React.FC<ChatBoxProps> = ({ dark, sessionId }) => {
   const [history, setHistory] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -41,9 +46,10 @@ const ChatBox: React.FC<{ dark?: boolean }> = ({ dark }) => {
     setLoading(true);
     
     try {
-      const formData = new FormData();
-      formData.append("question", question);
-      const res = await axios.post(`${API_URL}/ask`, formData);
+      const res = await axios.post(`${API_URL}/ask`, {
+        question: question,
+        session_id: sessionId
+      });
       
       // Update the message with bot response
       setHistory(prev => 

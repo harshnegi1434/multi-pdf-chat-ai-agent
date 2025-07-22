@@ -6,14 +6,21 @@ import { motion } from "framer-motion";
 import { PDFDocument } from "pdf-lib";
 import axios from "axios";
 
+
 interface FileInfo {
   name: string;
   size: number;
   pages?: number;
 }
 
+interface UploadResult {
+  files: FileInfo[];
+  session_id: string;
+}
+
+
 interface PdfUploaderProps {
-  onSuccess: (files: FileInfo[]) => void;
+  onSuccess: (result: UploadResult) => void;
   dark?: boolean;
 }
 
@@ -67,10 +74,10 @@ const PdfUploader: React.FC<PdfUploaderProps> = ({ onSuccess, dark }) => {
       const formData = new FormData();
       files.forEach((file) => formData.append("files", file));
       
-      await axios.post(`${API_URL}/upload_pdfs`, formData);
-      
-      // Pass the file info with actual page counts
-      onSuccess(fileInfosWithPages);
+      const response = await axios.post(`${API_URL}/upload_pdfs`, formData);
+      const session_id = response.data.session_id;
+      // Pass the file info and session_id
+      onSuccess({ files: fileInfosWithPages, session_id });
     } catch (error: any) {
       alert("Upload failed! " + (error.response?.data?.detail || error.message));
     }
