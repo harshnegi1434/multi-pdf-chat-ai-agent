@@ -1,12 +1,11 @@
-import React, { useState, useRef, useEffect } from "react";
-import { TextField, Button, Typography, Box, Stack, Avatar } from "@mui/material";
-import SendRoundedIcon from "@mui/icons-material/SendRounded";
-import { motion } from "framer-motion";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { TextField, Button, Typography, Box, Stack, Avatar, Paper, Chip } from "@mui/material";
+import { Send, SmartToy, Person } from "@mui/icons-material";
+import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
-import dayjs from "dayjs";
 import Lottie from "lottie-react";
-import botAnim from "./bot-thinking.json"; // Download a Lottie JSON bot animation and place here!
-import MessageBubble from "./MessageBubble";
+import botAnim from "./bot-thinking.json";
+import ChatInput from "./ChatInput";
 import axios from "axios";
 
 interface Message {
@@ -15,159 +14,318 @@ interface Message {
   ts: number;
 }
 
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const ChatBox: React.FC<{ dark?: boolean }> = ({ dark }) => {
-  const [question, setQuestion] = useState("");
   const [history, setHistory] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history, loading]);
+  }, []);
 
-  const handleAsk = async () => {
-    if (!question.trim()) return;
+  useEffect(() => {
+    scrollToBottom();
+  }, [history.length, loading, scrollToBottom]);
+
+  const handleSendMessage = useCallback(async (question: string) => {
+    const newMessage: Message = { 
+      user: question, 
+      bot: "", 
+      ts: Date.now() 
+    };
+    
+    // Add user message immediately
+    setHistory(prev => [...prev, newMessage]);
     setLoading(true);
+    
     try {
       const formData = new FormData();
       formData.append("question", question);
       const res = await axios.post(`${API_URL}/ask`, formData);
-      setHistory([
-        ...history,
-        { user: question, bot: res.data.answer, ts: Date.now() }
-      ]);
-      setQuestion("");
+      
+      // Update the message with bot response
+      setHistory(prev => 
+        prev.map(msg => 
+          msg.ts === newMessage.ts 
+            ? { ...msg, bot: res.data.answer }
+            : msg
+        )
+      );
     } catch (error: any) {
-      setHistory([
-        ...history,
-        {
-          user: question,
-          bot: "Error: " + (error.response?.data?.detail || error.message),
-          ts: Date.now(),
-        },
-      ]);
+      // Update the message with error response
+      setHistory(prev => 
+        prev.map(msg => 
+          msg.ts === newMessage.ts 
+            ? { ...msg, bot: "Error: " + (error.response?.data?.detail || error.message) }
+            : msg
+        )
+      );
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  // Group messages by day for date separator
-  const grouped = history.reduce<{ date: string; items: Message[] }[]>((acc, msg) => {
-    const date = dayjs(msg.ts).format("YYYY-MM-DD");
-    const last = acc[acc.length - 1];
-    if (!last || last.date !== date) {
-      acc.push({ date, items: [msg] });
-    } else {
-      last.items.push(msg);
-    }
-    return acc;
   }, []);
 
-  return (
-    <Box>
-      <Typography variant="h6" fontWeight={600} mb={2}>
-        Chat with your PDF
-      </Typography>
-      <Stack direction="row" spacing={2} mb={2}>
-        <TextField
-          label="Ask a question about your document..."
-          variant="outlined"
-          fullWidth
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          disabled={loading}
-          size="small"
-          sx={{
-            borderRadius: 2,
-            bgcolor: dark ? "#222" : "#f8fafc",
-          }}
-          onKeyDown={e => {
-            if (e.key === "Enter") handleAsk();
-          }}
-        />
-        <Button
-          variant="contained"
-          onClick={handleAsk}
-          disabled={loading || !question.trim()}
-          sx={{ minWidth: 48, borderRadius: 2 }}
-        >
-          <SendRoundedIcon />
-        </Button>
-      </Stack>
+  const MessageBubble = React.memo(({ text, isUser, markdown = false }: { text: string; isUser: boolean; markdown?: boolean }) => (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.3 }}
+      key={`${text}-${isUser}`}
+    >
       <Box
         sx={{
-          maxHeight: 320,
-          overflowY: "auto",
-          bgcolor: dark ? "#222" : "#f8fafc",
-          p: 2,
-          borderRadius: 2,
-          position: "relative",
+          display: "flex",
+          gap: 2,
+          mb: 3,
+          justifyContent: isUser ? "flex-end" : "flex-start",
         }}
       >
-        {grouped.map((group, i) => (
-          <React.Fragment key={group.date}>
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 0.7, y: 0 }}
-              transition={{ duration: 0.4 }}
-              style={{
-                textAlign: "center",
-                margin: "8px 0 12px 0",
-                fontSize: 13,
-                color: "#1976d2",
-                fontWeight: 500,
-              }}
-            >
-              {dayjs(group.date).format("MMM D, YYYY")}
-            </motion.div>
-            {group.items.map((msg, idx) => (
-              <React.Fragment key={msg.ts + "-" + idx}>
-                <MessageBubble text={msg.user} sender="user" dark={dark} />
-                <MessageBubble text={msg.bot} sender="bot" dark={dark} markdown />
-              </React.Fragment>
-            ))}
-          </React.Fragment>
-        ))}
-        {loading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginTop: 12,
-              marginBottom: 12,
+        {!isUser && (
+          <Avatar
+            sx={{
+              bgcolor: "primary.main",
+              width: 32,
+              height: 32,
+              order: isUser ? 1 : 0,
             }}
           >
-            <Avatar
-              sx={{
-                bgcolor: "#1976d2",
-                width: 32,
-                height: 32,
-                mr: 1,
-                boxShadow: 1,
+            <SmartToy sx={{ fontSize: 18 }} />
+          </Avatar>
+        )}
+        <Paper
+          elevation={0}
+          sx={{
+            px: 3,
+            py: 2,
+            maxWidth: "75%",
+            bgcolor: isUser ? "primary.main" : (dark ? "grey.800" : "grey.100"),
+            color: isUser ? "white" : "text.primary",
+            border: isUser ? "none" : 1,
+            borderColor: "divider",
+            textAlign: "left",
+            "& p": { 
+              margin: 0,
+              textAlign: "left",
+            },
+            "& pre": {
+              bgcolor: dark ? "grey.900" : "grey.50",
+              p: 1,
+              borderRadius: 1,
+              overflow: "auto",
+              textAlign: "left",
+            },
+            "& code": {
+              bgcolor: dark ? "grey.900" : "grey.50",
+              px: 0.5,
+              py: 0.25,
+              borderRadius: 0.5,
+              fontSize: "0.875rem",
+            },
+            "& ul, & ol": {
+              textAlign: "left",
+              paddingLeft: 2,
+            },
+            "& li": {
+              textAlign: "left",
+            },
+          }}
+        >
+          {markdown ? (
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => (
+                  <Typography variant="body2" sx={{ textAlign: "left", mb: 1 }}>
+                    {children}
+                  </Typography>
+                ),
+                strong: ({ children }) => (
+                  <Typography component="strong" sx={{ fontWeight: 600 }}>
+                    {children}
+                  </Typography>
+                ),
+                ul: ({ children }) => (
+                  <Box component="ul" sx={{ textAlign: "left", pl: 2, my: 1 }}>
+                    {children}
+                  </Box>
+                ),
+                ol: ({ children }) => (
+                  <Box component="ol" sx={{ textAlign: "left", pl: 2, my: 1 }}>
+                    {children}
+                  </Box>
+                ),
+                li: ({ children }) => (
+                  <Typography component="li" variant="body2" sx={{ textAlign: "left", mb: 0.5 }}>
+                    {children}
+                  </Typography>
+                ),
               }}
             >
-              <svg width="20" height="20" viewBox="0 0 54 54" fill="none">
-                <ellipse cx="27" cy="32" rx="9" ry="4" fill="#fff" opacity="0.5"/>
-                <circle cx="20" cy="27" r="3" fill="#fff"/>
-                <circle cx="34" cy="27" r="3" fill="#fff"/>
-              </svg>
-            </Avatar>
-            <Box sx={{ flex: 1 }}>
-              <Lottie animationData={botAnim} loop style={{ height: 32 }} />
-              <Typography variant="caption" color="text.secondary">
-                DocuBot is thinking…
-              </Typography>
-            </Box>
-          </motion.div>
+              {text}
+            </ReactMarkdown>
+          ) : (
+            <Typography variant="body2" sx={{ textAlign: "left" }}>
+              {text}
+            </Typography>
+          )}
+        </Paper>
+        {isUser && (
+          <Avatar
+            sx={{
+              bgcolor: "grey.400",
+              width: 32,
+              height: 32,
+            }}
+          >
+            <Person sx={{ fontSize: 18 }} />
+          </Avatar>
         )}
-        <div ref={chatEndRef} />
       </Box>
+    </motion.div>
+  ));
+
+  return (
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 2 }}>
+        <Typography variant="h6" fontWeight={600}>
+          Chat Assistant
+        </Typography>
+        <Chip 
+          label={`${history.length} message${history.length !== 1 ? 's' : ''}`}
+          size="small" 
+          variant="outlined"
+          sx={{ borderRadius: 1, fontSize: "0.75rem" }}
+        />
+      </Box>
+
+      {/* Chat Messages - Takes remaining space */}
+      <Paper
+        elevation={0}
+        sx={{
+          flex: 1,
+          overflowY: "auto",
+          p: 2,
+          mb: 2,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 2,
+          bgcolor: dark ? "grey.900" : "grey.50",
+          minHeight: 300,
+        }}
+      >
+        {history.length === 0 ? (
+          <Box sx={{ textAlign: "center", py: 4 }}>
+            <SmartToy sx={{ fontSize: 48, color: "primary.main", mb: 2, opacity: 0.5 }} />
+            <Typography variant="body2" color="text.secondary">
+              Ask me anything about your uploaded documents
+            </Typography>
+          </Box>
+        ) : (
+          <>
+            {history.map((msg, idx) => (
+              <React.Fragment key={`${idx}-${msg.ts}`}>
+                <MessageBubble text={msg.user} isUser />
+                {msg.bot ? (
+                  <MessageBubble text={msg.bot} isUser={false} markdown />
+                ) : loading && idx === history.length - 1 ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
+                      <Avatar
+                        sx={{
+                          bgcolor: "primary.main",
+                          width: 32,
+                          height: 32,
+                        }}
+                      >
+                        <SmartToy sx={{ fontSize: 18 }} />
+                      </Avatar>
+                      <Paper
+                        elevation={0}
+                        sx={{
+                          px: 2,
+                          py: 1.5,
+                          borderRadius: 2,
+                          border: 1,
+                          borderColor: "divider",
+                          bgcolor: dark ? "grey.800" : "grey.100",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                      >
+                        <Lottie animationData={botAnim} loop style={{ height: 20, width: 20 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          Thinking...
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  </motion.div>
+                ) : null}
+              </React.Fragment>
+            ))}
+          </>
+        )}
+
+        {/* Loading Animation - only when no pending message */}
+        <AnimatePresence>
+          {loading && history.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+            >
+              <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
+                <Avatar
+                  sx={{
+                    bgcolor: "primary.main",
+                    width: 32,
+                    height: 32,
+                  }}
+                >
+                  <SmartToy sx={{ fontSize: 18 }} />
+                </Avatar>
+                <Paper
+                  elevation={0}
+                  sx={{
+                    px: 2,
+                    py: 1.5,
+                    borderRadius: 2,
+                    border: 1,
+                    borderColor: "divider",
+                    bgcolor: dark ? "grey.800" : "grey.100",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                  }}
+                >
+                  <Lottie animationData={botAnim} loop style={{ height: 20, width: 20 }} />
+                  <Typography variant="body2" color="text.secondary">
+                    Thinking...
+                  </Typography>
+                </Paper>
+              </Box>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div ref={chatEndRef} />
+      </Paper>
+
+      {/* Input - Fixed at bottom */}
+      <ChatInput 
+        onSendMessage={handleSendMessage}
+        disabled={loading}
+        dark={dark}
+      />
     </Box>
   );
 };
 
-export default ChatBox;
+export default React.memo(ChatBox);
