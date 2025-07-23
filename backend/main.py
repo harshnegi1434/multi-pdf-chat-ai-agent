@@ -10,20 +10,13 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from contextlib import asynccontextmanager
 import time
+import boto3
 
-# Configure logging first
+# --- Logging configuration ---
 try:
     from loguru import logger
-    
-    # Configure loguru
+    # Remove all handlers and add only console handler
     logger.remove()  # Remove default handler
-    logger.add(
-        "logs/app_{time:YYYY-MM-DD}.log",
-        rotation="1 day",
-        retention="30 days",
-        level="INFO",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}"
-    )
     logger.add(
         lambda msg: print(msg, end=""),
         level="INFO",
@@ -34,56 +27,47 @@ except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+# --- Import project modules ---
 from pdf_utils import get_pdf_metadata, get_pdf_text_optimized
 from ai_utils import get_text_chunks_optimized
-from vector_utils import get_vector_store_optimized, similarity_search_optimized, clear_caches, get_vector_store_info
-import boto3
+from vector_utils import get_vector_store_optimized, similarity_search_optimized, clear_caches, get_vector_store_info, create_vector_index
 
-# Load environment variables
+# --- Load environment variables and configure API keys ---
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
-
 if not api_key:
     logger.error("GOOGLE_API_KEY not found in environment variables")
     raise ValueError("GOOGLE_API_KEY is required")
-
 genai.configure(api_key=api_key)
 
+# --- S3 Vectors bucket config ---
+S3_VECTOR_BUCKET = os.getenv("S3_VECTOR_BUCKET")
+if not S3_VECTOR_BUCKET:
+    raise ValueError("S3_VECTOR_BUCKET environment variable is required")
 
-
-# S3 bucket config
-S3_BUCKET = os.getenv("S3_BUCKET")
-if not S3_BUCKET:
-    raise ValueError("S3_BUCKET environment variable is required")
-s3_client = boto3.client("s3")
-
-# Per-session index naming
-
+# --- Per-session index naming helper ---
 def get_session_index_name(session_id: str) -> str:
-    return f"faiss_index_{session_id}"
+    # Each session gets its own S3 Vectors index
+    return f"s3vector-index-{session_id}".replace("_", "-")
 
-# S3-only: helpers removed, handled in vector_utils
-
+# --- FastAPI lifespan management (startup/shutdown hooks) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     logger.info("Starting Multi-PDF Chat AI Agent API")
-    
-    # Startup
+    # Startup: test Google AI connection
     try:
-        # Test Google AI connection
         model = genai.GenerativeModel('gemini-2.0-flash')
         test_response = model.generate_content("Test connection")
         logger.info("Google AI connection successful")
     except Exception as e:
         logger.error(f"Google AI connection failed: {e}")
-    
     yield
-    
-    # Shutdown
+    # Shutdown: clear in-memory caches
     logger.info("Shutting down application")
     clear_caches()
 
+# --- FastAPI app initialization ---
 app = FastAPI(
     title="InsightPDF API",
     description="Multi-PDF Chat AI Agent with optimized processing",
@@ -91,9 +75,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enhanced CORS configuration
-
-# CORS origins from environment
+# --- CORS configuration for frontend integration ---
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -103,7 +85,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request/Response models
+# --- Pydantic models for request/response validation ---
 from pydantic import BaseModel
 
 class UploadResponse(BaseModel):
@@ -114,8 +96,6 @@ class UploadResponse(BaseModel):
     files_info: List[Dict[str, Any]]
     session_id: str
 
-
-# Update QuestionRequest to include session_id
 class QuestionRequest(BaseModel):
     question: str
     session_id: str
@@ -124,6 +104,7 @@ class QuestionResponse(BaseModel):
     answer: str
     processing_time: float
 
+# --- Health check endpoints ---
 @app.get("/", tags=["Health"])
 async def root():
     """Health check endpoint"""
@@ -148,69 +129,67 @@ async def health_check():
         "google_ai": "connected" if api_key else "not configured"
     }
 
-
+# --- Endpoint: Get vector store info for a session ---
 @app.get("/vector_store_info", tags=["Info"])
 async def vector_store_info(session_id: str):
     """Get vector store information for a session"""
     try:
         index_name = get_session_index_name(session_id)
-        info = get_vector_store_info(index_name, s3_bucket=S3_BUCKET)
+        info = get_vector_store_info(index_name, s3_bucket =S3_VECTOR_BUCKET)
         return {"info": info}
     except Exception as e:
         logger.error(f"Error getting vector store info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- Helper: Process a single PDF file and extract metadata ---
 async def process_pdf_file(file: UploadFile) -> tuple[str, Dict[str, Any]]:
     """Process a single PDF file asynchronously"""
-    # Create unique temporary file
     temp_dir = tempfile.mkdtemp()
     temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{file.filename}")
-    
     try:
-        # Save file
+        # Save file to temp path
         with open(temp_path, "wb") as f:
             content = await file.read()
             f.write(content)
-        
-        # Get metadata
+        # Extract PDF metadata
         metadata = get_pdf_metadata(temp_path)
         metadata.update({
             "filename": file.filename,
             "content_type": file.content_type,
             "uploaded_size": len(content)
         })
-        
         logger.info(f"Processed {file.filename}: {metadata['page_count']} pages, {len(content)} bytes")
         return temp_path, metadata
-        
     except Exception as e:
         logger.error(f"Error processing {file.filename}: {e}")
-        # Clean up on error
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
 
+# --- Helper: Clean up temporary files after processing ---
 async def cleanup_temp_files(temp_paths: List[str]):
     """Clean up temporary files"""
     for path in temp_paths:
         try:
             if os.path.exists(path):
                 os.remove(path)
-                # Also remove the temp directory if empty
+                # Remove temp directory if empty
                 temp_dir = os.path.dirname(path)
                 if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                     os.rmdir(temp_dir)
         except Exception as e:
             logger.error(f"Error cleaning up {path}: {e}")
 
-
+# --- Endpoint: Upload and process multiple PDF files ---
 @app.post("/upload_pdfs", response_model=UploadResponse, tags=["PDF Processing"])
 async def upload_pdfs(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
 ):
     """
-    Upload and process multiple PDF files with optimized processing
+    Upload and process multiple PDF files with optimized processing.
+    - Extracts text and metadata from PDFs.
+    - Chunks text and creates a per-session S3 Vectors index.
     """
     start_time = time.time()
     session_id = str(uuid.uuid4())
@@ -224,6 +203,7 @@ async def upload_pdfs(
     temp_paths = []
     files_info = []
     try:
+        # Process all files concurrently
         tasks = [process_pdf_file(file) for file in files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, result in enumerate(results):
@@ -242,9 +222,11 @@ async def upload_pdfs(
         text_chunks = get_text_chunks_optimized(raw_text)
         if not text_chunks:
             raise HTTPException(status_code=400, detail="Failed to create text chunks from PDFs")
-        # Create vector store and upload directly to S3
+        # Create vector store and upload directly to S3 Vectors
         index_name = get_session_index_name(session_id)
-        get_vector_store_optimized(text_chunks, index_name, s3_bucket=S3_BUCKET)
+        # Before uploading vectors
+        create_vector_index(index_name, s3_bucket=S3_VECTOR_BUCKET, index_dim=768)
+        get_vector_store_optimized(text_chunks, index_name, s3_bucket=S3_VECTOR_BUCKET)
         processing_time = time.time() - start_time
         global upload_info
         upload_info = {
@@ -272,13 +254,12 @@ async def upload_pdfs(
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload processing failed: {str(e)}")
 
-
-
-# Update /ask endpoint to accept both fields in JSON body
+# --- Endpoint: Ask a question about the uploaded PDFs ---
 @app.post("/ask", response_model=QuestionResponse, tags=["Chat"])
 async def ask_question(request: QuestionRequest):
     """
-    Ask a question about the uploaded PDFs with optimized search
+    Ask a question about the uploaded PDFs with optimized search.
+    - Uses S3 Vectors similarity search for the session's index.
     """
     start_time = time.time()
     if not request.question or not request.question.strip():
@@ -286,9 +267,8 @@ async def ask_question(request: QuestionRequest):
     session_id = request.session_id
     logger.info(f"Processing question: {request.question[:50]} for session {session_id}")
     try:
-        # Download index from S3
         index_name = get_session_index_name(session_id)
-        response_text = similarity_search_optimized(request.question, index_name, s3_bucket=S3_BUCKET)
+        response_text = similarity_search_optimized(request.question, index_name, s3_bucket=S3_VECTOR_BUCKET)
         processing_time = time.time() - start_time
         logger.info(f"Question answered in {processing_time:.2f}s")
         return QuestionResponse(
@@ -301,6 +281,7 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Question processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Question processing failed: {str(e)}")
 
+# --- Endpoint: Clear all caches (admin) ---
 @app.delete("/clear_cache", tags=["Admin"])
 async def clear_all_cache():
     """Clear all caches - Admin endpoint"""
@@ -314,6 +295,7 @@ async def clear_all_cache():
         logger.error(f"Error clearing cache: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- Run the FastAPI app with Uvicorn (for local development) ---
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting InsightPDF API server...")
