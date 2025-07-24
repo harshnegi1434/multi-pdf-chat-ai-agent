@@ -10,8 +10,9 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-*.local
+*.local !Dockerfile.local
 .env.development
+.env.production
 
 # Editor directories and files
 .vscode/*
@@ -29,4 +30,5 @@ __pycache__
 venv
 faiss_index
 .env
+deploy-to-ecr.sh
 

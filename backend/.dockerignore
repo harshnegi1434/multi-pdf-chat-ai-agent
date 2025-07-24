@@ -1,0 +1,40 @@
+# Environment files
+.env
+.env.*
+
+# Development files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+deploy-to-ecr.sh
+Dockerfile.local
+Dockerfile
+
+# Virtual Environment (folder name created using python -m venv "folder name")
+venv
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
