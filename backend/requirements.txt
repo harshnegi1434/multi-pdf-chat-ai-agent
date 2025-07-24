@@ -48,6 +48,7 @@ langchain-google-genai==2.0.10
 langchain-text-splitters==0.3.8
 langsmith==0.4.8
 loguru==0.7.2
+mangum==0.19.0
 marshmallow==3.26.1
 multidict==6.6.3
 mypy_extensions==1.1.0

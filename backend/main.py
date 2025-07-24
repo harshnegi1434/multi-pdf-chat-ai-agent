@@ -5,12 +5,11 @@ import os
 import uuid
 import tempfile
 import asyncio
-from pathlib import Path
 from dotenv import load_dotenv
 import google.generativeai as genai
 from contextlib import asynccontextmanager
 import time
-import boto3
+
 
 # --- Logging configuration ---
 try:
@@ -295,7 +294,7 @@ async def ask_question(request: QuestionRequest):
         )
         
         processing_time = time.time() - start_time
-        logger.info(f"🎉 OPTIMIZED: Question answered in {processing_time:.2f}s")
+        logger.info(f"OPTIMIZED: Question answered in {processing_time:.2f}s")
         
         return QuestionResponse(
             answer=response_text,
@@ -334,3 +333,7 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
+
+# -- Run the FastAPI app with Mangum (for AWS Lambda) ---
+from mangum import Mangum
+lambda_handler = Mangum(app)
