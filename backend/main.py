@@ -188,24 +188,26 @@ async def upload_pdfs(
 ):
     """
     Upload and process multiple PDF files with optimized processing.
-    - Extracts text and metadata from PDFs.
-    - Chunks text and creates a per-session S3 Vectors index.
     """
     start_time = time.time()
     session_id = str(uuid.uuid4())
-    logger.info(f"Starting upload with {len(files)} files for session {session_id}")
+    logger.info(f"OPTIMIZED: Starting upload with {len(files)} files for session {session_id}")
+    
     # Validate files
     for file in files:
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail=f"Only PDF files are allowed. Got: {file.filename}")
         if file.size and file.size > 50 * 1024 * 1024:
             raise HTTPException(status_code=400, detail=f"File {file.filename} is too large (max 50MB)")
+    
     temp_paths = []
     files_info = []
+    
     try:
         # Process all files concurrently
         tasks = [process_pdf_file(file) for file in files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        
         for i, result in enumerate(results):
             if isinstance(result, tuple):
                 temp_path, metadata = result
@@ -214,20 +216,31 @@ async def upload_pdfs(
             else:
                 logger.error(f"Failed to process file {files[i].filename}: {result}")
                 raise HTTPException(status_code=400, detail=f"Failed to process {files[i].filename}")
+        
         logger.info("Extracting text from PDFs...")
         raw_text = await get_pdf_text_optimized(temp_paths)
+        
         if not raw_text or len(raw_text.strip()) < 100:
             raise HTTPException(status_code=400, detail="No meaningful text found in the uploaded PDFs")
+        
         logger.info("Creating text chunks...")
         text_chunks = get_text_chunks_optimized(raw_text)
+        
         if not text_chunks:
             raise HTTPException(status_code=400, detail="Failed to create text chunks from PDFs")
-        # Create vector store and upload directly to S3 Vectors
+        
+        # ✅ OPTIMIZED: Create vector store with better error handling
         index_name = get_session_index_name(session_id)
-        # Before uploading vectors
+        
+        logger.info(f"Creating S3 Vectors index: {index_name}")
         create_vector_index(index_name, s3_bucket=S3_VECTOR_BUCKET, index_dim=768)
+        
+        logger.info(f"Uploading {len(text_chunks)} chunks to S3 Vectors...")
         get_vector_store_optimized(text_chunks, index_name, s3_bucket=S3_VECTOR_BUCKET)
+        
         processing_time = time.time() - start_time
+        
+        # Store upload info
         global upload_info
         upload_info = {
             "files_count": len(files_info),
@@ -236,8 +249,11 @@ async def upload_pdfs(
             "processing_time": processing_time,
             "files_info": files_info
         }
+        
         background_tasks.add_task(cleanup_temp_files, temp_paths)
-        logger.info(f"Upload completed in {processing_time:.2f}s")
+        
+        logger.info(f"OPTIMIZED: Upload completed in {processing_time:.2f}s")
+        
         return UploadResponse(
             status="success",
             files_processed=len(files_info),
@@ -246,6 +262,7 @@ async def upload_pdfs(
             files_info=files_info,
             session_id=session_id
         )
+        
     except HTTPException:
         await cleanup_temp_files(temp_paths)
         raise
@@ -259,27 +276,38 @@ async def upload_pdfs(
 async def ask_question(request: QuestionRequest):
     """
     Ask a question about the uploaded PDFs with optimized search.
-    - Uses S3 Vectors similarity search for the session's index.
     """
     start_time = time.time()
+    
     if not request.question or not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+    
     session_id = request.session_id
-    logger.info(f"Processing question: {request.question[:50]} for session {session_id}")
+    logger.info(f"OPTIMIZED: Processing question for session {session_id}")
+    logger.info(f"Question: {request.question[:100]}...")
+    
     try:
         index_name = get_session_index_name(session_id)
-        response_text = similarity_search_optimized(request.question, index_name, s3_bucket=S3_VECTOR_BUCKET)
+        response_text = similarity_search_optimized(
+            request.question, 
+            index_name, 
+            s3_bucket=S3_VECTOR_BUCKET
+        )
+        
         processing_time = time.time() - start_time
-        logger.info(f"Question answered in {processing_time:.2f}s")
+        logger.info(f"🎉 OPTIMIZED: Question answered in {processing_time:.2f}s")
+        
         return QuestionResponse(
             answer=response_text,
             processing_time=processing_time
         )
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Question processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Question processing failed: {str(e)}")
+
 
 # --- Endpoint: Clear all caches (admin) ---
 @app.delete("/clear_cache", tags=["Admin"])
