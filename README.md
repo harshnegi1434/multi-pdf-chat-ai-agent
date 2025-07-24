@@ -25,12 +25,15 @@ InsightPDF is a full-stack application that lets you upload multiple PDF documen
 ```
 my-project/
 ├── backend/
+│   ├── .dockerignore
+│   ├── Dockerfile
+│   ├── Dockerfile.local
 │   ├── main.py
 │   └── ai_utils.py
 │   └── config.py
 │   └── pdf_utils.py
 │   └── vector_utils.py
-│   └── requiresments.txt
+│   └── requirements.txt
 │   └── .env.example
 ├── frontend/
 │   ├── public/
@@ -88,7 +91,6 @@ my-project/
   - VITE_API_URL=http://localhost:8000
 
 ---
-
 ## Quick Start (Development)
 
 ### Backend
@@ -104,14 +106,62 @@ my-project/
 3. Copy `.env.example` to `.env` and set `VITE_API_URL` if needed.
 4. Run the dev server: `npm run dev`
 
----
+
+## Deployment
+
+### Backend (AWS Lambda + API Gateway)
+1. Build the Docker image using the provided Lambda Dockerfile (`backend/Dockerfile`).
+2. Push the image to AWS ECR (Elastic Container Registry).
+3. Create or update an AWS Lambda function using the ECR image.
+4. Set environment variables in Lambda as needed.
+5. Create an API Gateway and connect it to your Lambda function.
+6. Configure CORS and endpoint security as required.
+
+### Frontend (AWS S3 + CloudFront)
+1. Build the frontend with `npm run build`. Configure the VITE_API_URL before building.
+2. Upload the contents of the `dist` folder to your S3 bucket.
+3. Set the S3 bucket for static website hosting (block public access, use OAC if needed).
+4. Create a CloudFront distribution pointing to the S3 bucket.
+5. (Optional) Set up a custom domain and SSL certificate using AWS ACM.
+6. Update DNS records to point your domain to the CloudFront distribution.
 
 ## Tech Stack
-- **Backend:** FastAPI, FAISS, Google Gemini, S3 Vectors, PyMuPDF, PyPDF2
-- **Frontend:** React, Vite, Material UI
-- **Cloud:** S3 Vectors for vector index storage
++**Backend:**
+  - FastAPI (API framework)
+  - FAISS (vector search)
+  - Google Gemini (AI embeddings & chat)
+  - PyMuPDF, PyPDF2 (PDF parsing)
+  - Boto3 (AWS SDK for S3)
+
+**Frontend:**
+  - React (UI library)
+  - Vite (build tool)
+  - Material UI (component library)
+
+**Cloud & DevOps:**
+  - AWS Lambda (serverless backend)
+  - AWS API Gateway (API endpoint)
+  - AWS S3 (static hosting & vector storage)
+  - AWS CloudFront (CDN & SSL)
+  - AWS ECR (container registry)
+  - Docker (containerization)
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## Credits
 Created by Harsh Negi
+ 
+---
+
+## Future Updates
+
+- **CI/CD Pipelines:** Automate build, test, and deployment using GitHub Actions or AWS CodePipeline.
+- **Session Management & User Authentication:** Add user accounts, persistent sessions, and secure authentication (OAuth, JWT, etc.).
+
+Suggestions and contributions are welcome!
